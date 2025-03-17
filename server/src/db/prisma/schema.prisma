@@ -16,7 +16,7 @@ datasource db {
 model User {
   id        String     @id @default(uuid())
   ip        String
-  responses Response[]
+  response  Response[]
   profile   Profile?
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
@@ -65,7 +65,7 @@ model Response {
   id        String   @id @default(uuid())
   survey    Survey   @relation(fields: [surveyId], references: [id])
   surveyId  String
-  user      User?    @relation(fields: [userId], references: [id]) 
+  user      User?    @relation(fields: [userId], references: [id])
   userId    String?
   answers   Answer[]
   createdAt DateTime @default(now())

@@ -1,9 +1,32 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import axios from 'axios';
+
+const SERVER_URL: string = import.meta.env.VITE_SERVER_URL
 
 export default function HomePage() {
-  const [isSubmitted, setIsSubmitted] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitted, setIsSubmitted] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+
+  // Get or create user on component mount
+  useEffect(() => {
+    const getUserOrCreate = async () => {
+      try {
+        // Get client IP address (in production you'd use a more reliable service)
+        const { data: ipData } = await axios.get("https://api.ipify.org?format=json");
+        const ip = ipData.ip;
+
+        // Create or get user
+        const { data: userData } = await axios.post(`${SERVER_URL}/api/users`, { ip });
+        setUserId(userData.id);
+      } catch (err) {
+        console.error("Failed to initialize user:", err);
+      }
+    };
+
+    getUserOrCreate();
+  }, []);
 
   // Function to handle mood selection
   const handleMoodSelection = async (mood: "good" | "bad"): Promise<void> => {
@@ -12,34 +35,30 @@ export default function HomePage() {
     
     try {
       // First, we need to create a response for the survey
-      const responseData = await fetch("http://localhost:3000/api/responses", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          surveyId: "mood-survey", 
-        }),
+      const { data: response } = await axios.post(`${SERVER_URL}/api/responses`, {
+        surveyId: "mood-survey",
+        userId: userId, // Include userId if available
       });
       
-      const response = await responseData.json();
+      // Then create an answer for this response with the selected option
+      const { data: answer } = await axios.post(`${SERVER_URL}/api/answers`, {
+        responseId: response.id,
+        questionId: "mood-question-1",
+      });
       
-      // Then create an answer for this response
-      await fetch("http://localhost:3000/api/answers", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          responseId: response.id,
-          questionId: "mood-question", 
-          textValue: mood,
-        }),
+      // Create the selected option for the answer
+      await axios.post(`${SERVER_URL}/api/selected-options`, {
+        answerId: answer.id,
+        value: mood,
       });
       
       setIsSubmitted(true);
     } catch (err) {
-      setError("Failed to submit your response. Please try again.");
+      const errorMessage = axios.isAxiosError(err) 
+        ? `Error ${err.response?.status}: ${err.response?.data?.message || err.message}`
+        : 'An unexpected error occurred';
+      
+      setError(`Failed to submit your response. Please try again. ${errorMessage}`);
       console.error(err);
     } finally {
       setIsSubmitting(false);

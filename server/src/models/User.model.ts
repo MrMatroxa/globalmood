@@ -4,14 +4,22 @@ const prisma = new PrismaClient();
 
 export interface User extends PrismaUser {}
 
-export async function findOrCreateUser(ip: string): Promise<User> {
+export async function findOrCreateUser(ip: string, country: string): Promise<User> {
   // First check if a user with this IP already exists
   const existingUser = await prisma.user.findFirst({
     where: { ip },
+    include: { profile: true },
   });
 
-  // If user exists, return it
   if (existingUser) {
+    // If the user exists but the profile doesn't have the country, update it
+    if (!existingUser.profile || existingUser.profile.country !== country) {
+      await prisma.profile.upsert({
+        where: { userId: existingUser.id },
+        update: { country },
+        create: { userId: existingUser.id, country },
+      });
+    }
     return existingUser;
   }
 
@@ -19,9 +27,15 @@ export async function findOrCreateUser(ip: string): Promise<User> {
   return await prisma.user.create({
     data: {
       ip: ip,
+      profile: {
+        create: {
+          country,
+        },
+      },
       createdAt: new Date(),
       updatedAt: new Date(),
     },
+    include: { profile: true },
   });
 }
 

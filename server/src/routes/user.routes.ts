@@ -5,8 +5,8 @@ const router = Router();
 
 router.post("/", async (req: Request, res: Response): Promise<void> => {
   try {
-    const { ip } = req.body;
-    const user = await findOrCreateUser(ip);
+    const { ip, country } = req.body;
+    const user = await findOrCreateUser(ip, country);
     res.status(201).json(user);
   } catch (error) {
     res.status(500).json({ error: (error as Error).message });

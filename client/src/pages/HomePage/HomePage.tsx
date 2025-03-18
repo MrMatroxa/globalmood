@@ -8,14 +8,15 @@ export default function HomePage() {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [userCountry, setUserCountry] = useState<string | null>(null);
+
   const userInitialized = useRef(false);
-  // Add state for mood statistics
+
   const [moodStats, setMoodStats] = useState<{ good: number; bad: number }>({
     good: 0,
     bad: 0,
   });
 
-  // Add these new states to your component
   const [comparisonPeriod, setComparisonPeriod] = useState<string | null>(null);
   const [compareData, setCompareData] = useState<{
     [key: string]: { good: number; bad: number };
@@ -23,7 +24,8 @@ export default function HomePage() {
     today: { good: 0, bad: 0 },
   });
 
-  // Get or create user on component mount
+  const [alreadyVoted, setAlreadyVoted] = useState<boolean>(false);
+
   useEffect(() => {
     const getUserOrCreate = async () => {
       // Skip if we've already initialized the user
@@ -35,13 +37,25 @@ export default function HomePage() {
           "https://api.ipify.org?format=json"
         );
         const ip = ipData.ip;
+        const ipToken = import.meta.env.VITE_IP_INFO_TOKEN;
+
+        const { data: ipInfo } = await axios.get(
+          `https://ipinfo.io/${ip}?token=${ipToken}`
+        );
+
+        const country = ipInfo.country;
+        setUserCountry(country);
 
         // Create or get user
         const { data: userData } = await axios.post(`${SERVER_URL}/api/users`, {
           ip,
+          country,
         });
         setUserId(userData.id);
         userInitialized.current = true;
+
+        // Check if user has already voted today
+        await checkUserVoted(userData.id);
       } catch (err) {
         console.error("Failed to initialize user:", err);
       }
@@ -49,6 +63,26 @@ export default function HomePage() {
 
     getUserOrCreate();
   }, []);
+
+  // Add function to check if user has already voted today
+  const checkUserVoted = async (userId: string) => {
+    try {
+      // Fetch user's responses for today
+      const { data } = await axios.get(
+        `${SERVER_URL}/api/responses/check/${userId}`
+      );
+
+      if (data.alreadyVoted) {
+        // If they already voted, show the results UI
+        setAlreadyVoted(true);
+        setIsSubmitted(true);
+        // Fetch statistics to display
+        await fetchMoodStats();
+      }
+    } catch (err) {
+      console.error("Failed to check user voting status:", err);
+    }
+  };
 
   // Function to fetch mood statistics
   const fetchMoodStats = async (
@@ -110,15 +144,26 @@ export default function HomePage() {
 
       setIsSubmitted(true);
     } catch (err) {
-      const errorMessage = axios.isAxiosError(err)
-        ? `Error ${err.response?.status}: ${
-            err.response?.data?.message || err.message
-          }`
-        : "An unexpected error occurred";
+      if (
+        axios.isAxiosError(err) &&
+        err.response?.status === 403 &&
+        err.response?.data?.alreadyVoted
+      ) {
+        // If they already voted, show the results UI
+        setAlreadyVoted(true);
+        setIsSubmitted(true);
+        await fetchMoodStats();
+      } else {
+        const errorMessage = axios.isAxiosError(err)
+          ? `Error ${err.response?.status}: ${
+              err.response?.data?.message || err.message
+            }`
+          : "An unexpected error occurred";
 
-      setError(
-        `Failed to submit your response. Please try again. ${errorMessage}`
-      );
+        setError(
+          `Failed to submit your response. Please try again. ${errorMessage}`
+        );
+      }
       console.error(err);
     } finally {
       setIsSubmitting(false);
@@ -133,10 +178,14 @@ export default function HomePage() {
     return (
       <div className="max-w-2xl mx-auto p-8 text-center bg-white rounded-lg shadow-lg mt-10">
         <h2 className="text-3xl font-bold text-gray-800 mb-4">
-          Thank you for your response!
+          {alreadyVoted
+            ? "You've already submitted your mood today"
+            : "Thank you for your response!"}
         </h2>
         <p className="text-xl text-gray-600 mb-6">
-          Your mood has been recorded.
+          {alreadyVoted
+            ? "Here are today's results so far"
+            : "Your mood has been recorded."}
         </p>
 
         <h3 className="text-2xl font-semibold text-gray-700 mb-4">
@@ -202,6 +251,16 @@ export default function HomePage() {
             >
               Last Week
             </button>
+            <button
+              onClick={() => handlePeriodChange("today", "month")}
+              className={`px-3 py-1 rounded ${
+                comparisonPeriod === "month"
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-200"
+              }`}
+            >
+              Last Month
+            </button>
           </div>
         </div>
 
@@ -210,7 +269,11 @@ export default function HomePage() {
           <div className="mt-4">
             <h4 className="text-lg font-semibold mb-2">
               Comparison: Today vs{" "}
-              {comparisonPeriod === "yesterday" ? "Yesterday" : "Last Week"}
+              {comparisonPeriod === "yesterday"
+                ? "Yesterday"
+                : comparisonPeriod === "week"
+                ? "Last Week"
+                : "Last Month"}
             </h4>
 
             <div className="grid grid-cols-2 gap-4 mt-2">
@@ -218,7 +281,34 @@ export default function HomePage() {
               <div>
                 <h5 className="text-sm font-medium mb-1">Today</h5>
                 <div className="h-8 w-full bg-gray-200 rounded-md overflow-hidden flex">
-                  {/* Same chart rendering as before */}
+                  {/* Render today's chart */}
+                  {(() => {
+                    const total =
+                      compareData.today?.good + compareData.today?.bad || 1;
+                    const goodPercentage =
+                      (compareData.today?.good / total) * 100;
+                    const badPercentage =
+                      (compareData.today?.bad / total) * 100;
+
+                    return (
+                      <>
+                        <div
+                          className="h-full bg-green-500 flex items-center justify-center text-white text-xs"
+                          style={{ width: `${goodPercentage}%` }}
+                        >
+                          {compareData.today?.good > 0 &&
+                            `${goodPercentage.toFixed(0)}%`}
+                        </div>
+                        <div
+                          className="h-full bg-red-500 flex items-center justify-center text-white text-xs"
+                          style={{ width: `${badPercentage}%` }}
+                        >
+                          {compareData.today?.bad > 0 &&
+                            `${badPercentage.toFixed(0)}%`}
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
                 <div className="text-xs mt-1">
                   Good: {compareData.today?.good || 0} | Bad:{" "}
@@ -229,11 +319,38 @@ export default function HomePage() {
               {/* Comparison period chart */}
               <div>
                 <h5 className="text-sm font-medium mb-1">
-                  {comparisonPeriod === "yesterday" ? "Yesterday" : "Last Week"}
+                  {comparisonPeriod === "yesterday"
+                    ? "Yesterday"
+                    : comparisonPeriod === "week"
+                    ? "Last Week"
+                    : "Last Month"}
                 </h5>
                 <div className="h-8 w-full bg-gray-200 rounded-md overflow-hidden flex">
-                  {/* Similar chart rendering for comparison data */}
-                  {/* You can extract the chart into a reusable component */}
+                  {/* Render comparison chart */}
+                  {(() => {
+                    const compData = compareData[comparisonPeriod];
+                    const total = compData?.good + compData?.bad || 1;
+                    const goodPercentage = (compData?.good / total) * 100;
+                    const badPercentage = (compData?.bad / total) * 100;
+
+                    return (
+                      <>
+                        <div
+                          className="h-full bg-green-500 flex items-center justify-center text-white text-xs"
+                          style={{ width: `${goodPercentage}%` }}
+                        >
+                          {compData?.good > 0 &&
+                            `${goodPercentage.toFixed(0)}%`}
+                        </div>
+                        <div
+                          className="h-full bg-red-500 flex items-center justify-center text-white text-xs"
+                          style={{ width: `${badPercentage}%` }}
+                        >
+                          {compData?.bad > 0 && `${badPercentage.toFixed(0)}%`}
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
                 <div className="text-xs mt-1">
                   Good: {compareData[comparisonPeriod]?.good || 0} | Bad:{" "}

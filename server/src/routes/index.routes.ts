@@ -7,6 +7,7 @@ import questionRoutes from "./question.routes";
 import responseRoutes from "./response.routes";
 import selectedOptionRoutes from "./selectedOption.routes";
 import surveyRoutes from "./survey.routes";
+import statisticsRoutes from "./statistics.routes";
 
 const router = Router();
 
@@ -18,6 +19,7 @@ router.use("/questions", questionRoutes);
 router.use("/responses", responseRoutes);
 router.use("/selected-options", selectedOptionRoutes);
 router.use("/surveys", surveyRoutes);
+router.use("/statistics", statisticsRoutes);
 
 router.get("/", (req: Request, res: Response, next: NextFunction) => {
   res.json("All good in here");

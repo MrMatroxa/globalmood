@@ -17,22 +17,24 @@ const getDateRange = (period: string): { start: Date; end: Date } => {
     case 'yesterday': {
       const yesterday = new Date(today);
       yesterday.setDate(yesterday.getDate() - 1);
-      const dayBeforeYesterday = new Date(yesterday);
-      dayBeforeYesterday.setDate(dayBeforeYesterday.getDate() - 1);
-      return { start: dayBeforeYesterday, end: yesterday };
+      return { start: yesterday, end: today };
     }
     case 'week': {
       const weekAgo = new Date(today);
       weekAgo.setDate(weekAgo.getDate() - 7);
-      return { start: weekAgo, end: today };
+      const sixDaysAgo = new Date(weekAgo);
+      sixDaysAgo.setDate(sixDaysAgo.getDate() + 1);
+      return { start: weekAgo, end: sixDaysAgo };
     }
     case 'month': {
       const monthAgo = new Date(today);
       monthAgo.setMonth(monthAgo.getMonth() - 1);
-      return { start: monthAgo, end: today };
+      const monthAgoCopy = new Date(monthAgo);
+      monthAgoCopy.setDate(monthAgoCopy.getDate() + 1);
+      return { start: monthAgo, end: monthAgoCopy };
     }
     default:
-      return { start: today, end: tomorrow }; // Default to today
+      return { start: today, end: tomorrow }; 
   }
 };
 

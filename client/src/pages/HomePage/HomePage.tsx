@@ -8,7 +8,6 @@ export default function HomePage() {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
-  const [userCountry, setUserCountry] = useState<string | null>(null);
 
   const userInitialized = useRef(false);
 
@@ -44,7 +43,6 @@ export default function HomePage() {
         );
 
         const country = ipInfo.country;
-        setUserCountry(country);
 
         // Create or get user
         const { data: userData } = await axios.post(`${SERVER_URL}/api/users`, {

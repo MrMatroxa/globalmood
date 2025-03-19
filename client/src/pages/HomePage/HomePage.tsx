@@ -1,25 +1,47 @@
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
+import { motion, AnimatePresence } from "framer-motion";
+import { FaGlobe } from "react-icons/fa";
+import VotingSection from "../../components/VotingSection/VotingSection";
+import ResultsSection from "../../components/ResultsSection/ResultsSection";
+import "./HomePage.css";
+// Import the country library
+import countries from "i18n-iso-countries";
+// Import English locale data
+import en from "i18n-iso-countries/langs/en.json";
+
+// Initialize the library with locale data
+countries.registerLocale(en);
 
 const SERVER_URL: string = import.meta.env.VITE_SERVER_URL;
+
+interface MoodStats {
+  good: number;
+  bad: number;
+}
+
+interface CompareData {
+  [key: string]: MoodStats;
+}
 
 export default function HomePage() {
   const [isSubmitted, setIsSubmitted] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [userCountry, setUserCountry] = useState<string | null>(null);
+  const [userCountryName, setUserCountryName] = useState<string | null>(null);
+  const [showCountryStats, setShowCountryStats] = useState<boolean>(false);
 
   const userInitialized = useRef(false);
 
-  const [moodStats, setMoodStats] = useState<{ good: number; bad: number }>({
+  const [moodStats, setMoodStats] = useState<MoodStats>({
     good: 0,
     bad: 0,
   });
 
   const [comparisonPeriod, setComparisonPeriod] = useState<string | null>(null);
-  const [compareData, setCompareData] = useState<{
-    [key: string]: { good: number; bad: number };
-  }>({
+  const [compareData, setCompareData] = useState<CompareData>({
     today: { good: 0, bad: 0 },
   });
 
@@ -27,11 +49,9 @@ export default function HomePage() {
 
   useEffect(() => {
     const getUserOrCreate = async () => {
-      // Skip if we've already initialized the user
       if (userInitialized.current) return;
 
       try {
-        // Get client IP address (in production you'd use a more reliable service)
         const { data: ipData } = await axios.get(
           "https://api.ipify.org?format=json"
         );
@@ -41,10 +61,13 @@ export default function HomePage() {
         const { data: ipInfo } = await axios.get(
           `https://ipinfo.io/${ip}?token=${ipToken}`
         );
-
         const country = ipInfo.country;
 
-        // Create or get user
+        // Convert country code to full name
+        const countryName = countries.getName(country, "en") || country;
+        setUserCountry(country);
+        setUserCountryName(countryName);
+
         const { data: userData } = await axios.post(`${SERVER_URL}/api/users`, {
           ip,
           country,
@@ -52,7 +75,6 @@ export default function HomePage() {
         setUserId(userData.id);
         userInitialized.current = true;
 
-        // Check if user has already voted today
         await checkUserVoted(userData.id);
       } catch (err) {
         console.error("Failed to initialize user:", err);
@@ -62,19 +84,14 @@ export default function HomePage() {
     getUserOrCreate();
   }, []);
 
-  // Add function to check if user has already voted today
   const checkUserVoted = async (userId: string) => {
     try {
-      // Fetch user's responses for today
       const { data } = await axios.get(
         `${SERVER_URL}/api/responses/check/${userId}`
       );
-
       if (data.alreadyVoted) {
-        // If they already voted, show the results UI
         setAlreadyVoted(true);
         setIsSubmitted(true);
-        // Fetch statistics to display
         await fetchMoodStats();
       }
     } catch (err) {
@@ -82,15 +99,26 @@ export default function HomePage() {
     }
   };
 
-  // Function to fetch mood statistics
   const fetchMoodStats = async (
     period: string = "today",
-    comparison: string | null = null
+    comparison: string | null = null,
+    countryStatsOverride?: boolean 
   ) => {
     try {
       let url = `${SERVER_URL}/api/statistics/mood?period=${period}`;
       if (comparison) {
         url += `&comparison=${comparison}`;
+      }
+
+      // Use the override value if provided, otherwise use the state value
+      const useCountryStats =
+        countryStatsOverride !== undefined
+          ? countryStatsOverride
+          : showCountryStats;
+
+      // Add country filter if user wants to see country-specific stats
+      if (useCountryStats && userCountry) {
+        url += `&country=${userCountry}`;
       }
 
       const { data } = await axios.get(url);
@@ -101,7 +129,6 @@ export default function HomePage() {
     }
   };
 
-  // Add a function to handle period selection
   const handlePeriodChange = (
     period: string,
     comparison: string | null = null
@@ -110,36 +137,38 @@ export default function HomePage() {
     fetchMoodStats(period, comparison);
   };
 
-  // Function to handle mood selection
+  const toggleCountryStats = () => {
+    const newShowCountryStats = !showCountryStats;
+    setShowCountryStats(newShowCountryStats);
+
+    // Use the new value directly instead of relying on state update
+    fetchMoodStats("today", comparisonPeriod, newShowCountryStats);
+  };
+
   const handleMoodSelection = async (mood: "good" | "bad"): Promise<void> => {
     setIsSubmitting(true);
     setError(null);
 
     try {
-      // First, we need to create a response for the survey
       const { data: response } = await axios.post(
         `${SERVER_URL}/api/responses`,
         {
           surveyId: "mood-survey",
-          userId: userId, // Include userId if available
+          userId: userId,
         }
       );
 
-      // Then create an answer for this response with the selected option
       const { data: answer } = await axios.post(`${SERVER_URL}/api/answers`, {
         responseId: response.id,
         questionId: "mood-question-1",
       });
 
-      // Create the selected option for the answer
       await axios.post(`${SERVER_URL}/api/selected-options`, {
         answerId: answer.id,
         value: mood,
       });
 
-      // Fetch the latest mood statistics after successful submission
       await fetchMoodStats();
-
       setIsSubmitted(true);
     } catch (err) {
       if (
@@ -147,7 +176,6 @@ export default function HomePage() {
         err.response?.status === 403 &&
         err.response?.data?.alreadyVoted
       ) {
-        // If they already voted, show the results UI
         setAlreadyVoted(true);
         setIsSubmitted(true);
         await fetchMoodStats();
@@ -168,235 +196,78 @@ export default function HomePage() {
     }
   };
 
-  if (isSubmitted) {
-    const total = moodStats.good + moodStats.bad || 1; // Avoid division by zero
-    const goodPercentage = (moodStats.good / total) * 100;
-    const badPercentage = (moodStats.bad / total) * 100;
-
-    return (
-      <div className="max-w-2xl mx-auto p-8 text-center bg-white rounded-lg shadow-lg mt-10">
-        <h2 className="text-3xl font-bold text-gray-800 mb-4">
-          {alreadyVoted
-            ? "You've already submitted your mood today"
-            : "Thank you for your response!"}
-        </h2>
-        <p className="text-xl text-gray-600 mb-6">
-          {alreadyVoted
-            ? "Here are today's results so far"
-            : "Your mood has been recorded."}
-        </p>
-
-        <h3 className="text-2xl font-semibold text-gray-700 mb-4">
-          Today's Mood Statistics
-        </h3>
-        <div className="mb-2">
-          <div className="h-8 w-full bg-gray-200 rounded-md overflow-hidden flex">
-            <div
-              className="h-full bg-green-500 flex items-center justify-center text-white font-medium"
-              style={{ width: `${goodPercentage}%` }}
-            >
-              {moodStats.good > 0 && `${goodPercentage.toFixed(0)}%`}
-            </div>
-            <div
-              className="h-full bg-red-500 flex items-center justify-center text-white font-medium"
-              style={{ width: `${badPercentage}%` }}
-            >
-              {moodStats.bad > 0 && `${badPercentage.toFixed(0)}%`}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex justify-center mt-2 gap-8">
-          <div className="flex items-center">
-            <div className="w-4 h-4 bg-green-500 rounded-sm mr-2"></div>
-            <span>Good: {moodStats.good}</span>
-          </div>
-          <div className="flex items-center">
-            <div className="w-4 h-4 bg-red-500 rounded-sm mr-2"></div>
-            <span>Bad: {moodStats.bad}</span>
-          </div>
-        </div>
-
-        {/* Period selection buttons */}
-        <div className="mt-6 mb-4">
-          <h4 className="text-lg font-semibold mb-2">Compare with:</h4>
-          <div className="flex justify-center gap-2">
-            <button
-              onClick={() => handlePeriodChange("today")}
-              className={`px-3 py-1 rounded ${
-                !comparisonPeriod ? "bg-blue-600 text-white" : "bg-gray-200"
-              }`}
-            >
-              Just Today
-            </button>
-            <button
-              onClick={() => handlePeriodChange("today", "yesterday")}
-              className={`px-3 py-1 rounded ${
-                comparisonPeriod === "yesterday"
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-200"
-              }`}
-            >
-              Yesterday
-            </button>
-            <button
-              onClick={() => handlePeriodChange("today", "week")}
-              className={`px-3 py-1 rounded ${
-                comparisonPeriod === "week"
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-200"
-              }`}
-            >
-              Last Week
-            </button>
-            <button
-              onClick={() => handlePeriodChange("today", "month")}
-              className={`px-3 py-1 rounded ${
-                comparisonPeriod === "month"
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-200"
-              }`}
-            >
-              Last Month
-            </button>
-          </div>
-        </div>
-
-        {/* Show comparison chart if comparison period is selected */}
-        {comparisonPeriod && (
-          <div className="mt-4">
-            <h4 className="text-lg font-semibold mb-2">
-              Comparison: Today vs{" "}
-              {comparisonPeriod === "yesterday"
-                ? "Yesterday"
-                : comparisonPeriod === "week"
-                ? "Last Week"
-                : "Last Month"}
-            </h4>
-
-            <div className="grid grid-cols-2 gap-4 mt-2">
-              {/* Today's chart */}
-              <div>
-                <h5 className="text-sm font-medium mb-1">Today</h5>
-                <div className="h-8 w-full bg-gray-200 rounded-md overflow-hidden flex">
-                  {/* Render today's chart */}
-                  {(() => {
-                    const total =
-                      compareData.today?.good + compareData.today?.bad || 1;
-                    const goodPercentage =
-                      (compareData.today?.good / total) * 100;
-                    const badPercentage =
-                      (compareData.today?.bad / total) * 100;
-
-                    return (
-                      <>
-                        <div
-                          className="h-full bg-green-500 flex items-center justify-center text-white text-xs"
-                          style={{ width: `${goodPercentage}%` }}
-                        >
-                          {compareData.today?.good > 0 &&
-                            `${goodPercentage.toFixed(0)}%`}
-                        </div>
-                        <div
-                          className="h-full bg-red-500 flex items-center justify-center text-white text-xs"
-                          style={{ width: `${badPercentage}%` }}
-                        >
-                          {compareData.today?.bad > 0 &&
-                            `${badPercentage.toFixed(0)}%`}
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
-                <div className="text-xs mt-1">
-                  Good: {compareData.today?.good || 0} | Bad:{" "}
-                  {compareData.today?.bad || 0}
-                </div>
-              </div>
-
-              {/* Comparison period chart */}
-              <div>
-                <h5 className="text-sm font-medium mb-1">
-                  {comparisonPeriod === "yesterday"
-                    ? "Yesterday"
-                    : comparisonPeriod === "week"
-                    ? "Last Week"
-                    : "Last Month"}
-                </h5>
-                <div className="h-8 w-full bg-gray-200 rounded-md overflow-hidden flex">
-                  {/* Render comparison chart */}
-                  {(() => {
-                    const compData = compareData[comparisonPeriod];
-                    const total = compData?.good + compData?.bad || 1;
-                    const goodPercentage = (compData?.good / total) * 100;
-                    const badPercentage = (compData?.bad / total) * 100;
-
-                    return (
-                      <>
-                        <div
-                          className="h-full bg-green-500 flex items-center justify-center text-white text-xs"
-                          style={{ width: `${goodPercentage}%` }}
-                        >
-                          {compData?.good > 0 &&
-                            `${goodPercentage.toFixed(0)}%`}
-                        </div>
-                        <div
-                          className="h-full bg-red-500 flex items-center justify-center text-white text-xs"
-                          style={{ width: `${badPercentage}%` }}
-                        >
-                          {compData?.bad > 0 && `${badPercentage.toFixed(0)}%`}
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
-                <div className="text-xs mt-1">
-                  Good: {compareData[comparisonPeriod]?.good || 0} | Bad:{" "}
-                  {compareData[comparisonPeriod]?.bad || 0}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
   return (
-    <div className="max-w-2xl mx-auto p-8 text-center bg-white rounded-lg shadow-lg mt-10">
-      <h1 className="text-4xl font-bold text-gray-800 mb-6">
-        Global Mood Survey
-      </h1>
-      <h2 className="text-2xl font-semibold text-gray-700 mb-8">
-        How do you feel today?
-      </h2>
+    <div className="min-h-screen bg-gradient-to-b from-blue-50 to-indigo-50 py-10 px-4">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6 }}
+        className="max-w-2xl mx-auto bg-white rounded-2xl shadow-xl overflow-hidden"
+      >
+        {/* Globe header with gradient background */}
+        <div className="bg-gradient-to-r from-blue-500 to-indigo-600 p-6 text-white relative">
+          <motion.div
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ delay: 0.2, type: "spring", stiffness: 100 }}
+            className="absolute right-6 top-6 text-4xl opacity-40"
+          >
+            <FaGlobe />
+          </motion.div>
+          <motion.h1
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            className="text-4xl font-bold mb-2"
+          >
+            Global Mood
+          </motion.h1>
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.4 }}
+            className="text-blue-100"
+          >
+            How are people feeling around the world today?
+          </motion.p>
+        </div>
 
-      <div className="flex justify-center gap-6 mt-8">
-        <button
-          onClick={() => handleMoodSelection("good")}
-          disabled={isSubmitting}
-          className="px-8 py-4 text-xl font-medium bg-green-500 text-white rounded-lg 
-                     hover:bg-green-600 hover:-translate-y-1 hover:shadow-lg transition-all 
-                     disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Good 😊
-        </button>
+        {/* Content section */}
+        <div className="p-8">
+          <AnimatePresence mode="wait">
+            {!isSubmitted ? (
+              <VotingSection
+                key="voting"
+                handleMoodSelection={handleMoodSelection}
+                isSubmitting={isSubmitting}
+                error={error}
+              />
+            ) : (
+              <ResultsSection
+                key="results"
+                alreadyVoted={alreadyVoted}
+                moodStats={moodStats}
+                comparisonPeriod={comparisonPeriod}
+                compareData={compareData}
+                handlePeriodChange={handlePeriodChange}
+                userCountryName={userCountryName}
+                showCountryStats={showCountryStats}
+                toggleCountryStats={toggleCountryStats}
+              />
+            )}
+          </AnimatePresence>
+        </div>
+      </motion.div>
 
-        <button
-          onClick={() => handleMoodSelection("bad")}
-          disabled={isSubmitting}
-          className="px-8 py-4 text-xl font-medium bg-red-500 text-white rounded-lg 
-                     hover:bg-red-600 hover:-translate-y-1 hover:shadow-lg transition-all 
-                     disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Bad 😔
-        </button>
-      </div>
-
-      {isSubmitting && (
-        <p className="mt-4 text-gray-600">Submitting your response...</p>
-      )}
-      {error && <p className="mt-4 text-red-500">{error}</p>}
+      {/* Attribution footer */}
+      <motion.p
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 1 }}
+        className="text-center text-gray-500 text-xs mt-6"
+      >
+        © {new Date().getFullYear()} Global Mood Survey
+      </motion.p>
     </div>
   );
 }
